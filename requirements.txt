@@ -6,3 +6,4 @@ xlsxwriter
 streamlit-option-menu
 hydralit-components
 streamlit-extras
+cryptography
