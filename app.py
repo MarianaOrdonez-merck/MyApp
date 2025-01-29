@@ -4,7 +4,7 @@ import io
 
 # Configure the page
 st.set_page_config(
-    page_title="Diferencias entre conciliaciones",
+    page_title="Diferencias de conciliaciones",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -51,7 +51,7 @@ def load_css():
     """, unsafe_allow_html=True)
 
 def show_home():
-    st.markdown("<h2 style='color: blue;'>Conciliaciones Modernas</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='color: blue;'>Diferencias de conciliaciones</h2>", unsafe_allow_html=True)
     st.write("Sistema de comparación de archivos")
 
     # Información básica sobre el sistema
