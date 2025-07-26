@@ -1,15 +1,15 @@
 import streamlit as st
 import pandas as pd
 import io
+import openpyxl
 
-# Configure the page
+# Configuración de la página
 st.set_page_config(
-    page_title="Diferencias de conciliaciones",
+    page_title="Diferencias entre conciliaciones",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# Custom CSS with improved styling
 def load_css():
     st.markdown("""
         <style>
@@ -51,49 +51,65 @@ def load_css():
     """, unsafe_allow_html=True)
 
 def show_home():
-    st.markdown("<h2 style='color: blue;'>Diferencias de conciliaciones</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='color: blue;'>Diferencias de Conciliaciones</h2>", unsafe_allow_html=True)
     st.write("Sistema de comparación de archivos")
 
-    # Información básica sobre el sistema
     st.write("""
-        **Paso 1:** Seleccione el tipo de reporte
-        **Paso 2:** Cargue los archivos a comparar
+        **Paso 1:** Seleccione el tipo de reporte  
+        **Paso 2:** Cargue los archivos a comparar  
         **Paso 3:** Visualice y descargue los resultados
     """)
 
-def preprocess_file(df, report_type):
+def preprocess_file(df, report_type, report_system):
     try:
         if report_type == "visitas":
-            columns_to_drop = ["Country", "Subject Number", "Visit\nOrder", "Type of Visit", "DS01 Status", "Date of \nDisposition", "INEX"]
-            existing_columns = [col for col in columns_to_drop if col in df.columns]
-            if existing_columns:
-                df = df.drop(columns=existing_columns)
-            if len(df) > 4:
-                df = df.iloc[4:]
+            if report_system == "JReview viejo":
+                # Headers empiezan en la línea 5 (index 4)
+                # Esto se debe manejar en la carga, pero si ya cargaste sin header, aquí ajustamos:
+                # Si df ya tiene headers, asumimos que se cargó con header=4
+                # Seleccionamos solo las columnas necesarias
+
+                selected_cols = ["Site\nNumber", "Screening\nNumber", "Arm", "Visit Name", "DOV", "Erroneous\nVisit"]
+                existing_columns = [col for col in selected_cols if col in df.columns]
+                df = df[existing_columns]
+            else:  # MAP
+                df.columns = df.columns.str.strip()
+                selected_cols = ["Study", "Study Site", "Site\nName", "Subject Number", "Visit Name","Visit Mnemonic", "Patient Visit Date"]
+                existing_columns = [col for col in selected_cols if col in df.columns]
+                df = df[existing_columns]
         elif report_type == "imagenes":
-            columns_to_drop = ["Subject\nNumber", "Sequence\nNumber"]
-            existing_columns = [col for col in columns_to_drop if col in df.columns]
-            if existing_columns:
-                df = df.drop(columns=existing_columns)
-            if len(df) > 4:
-                df = df.iloc[4:]
+            if len(df) > 9:
+                df = df.iloc[10:]
+            df.columns = df.columns.str.strip()
         return df
     except Exception as e:
         st.error(f"Error al preprocesar el archivo: {str(e)}")
         return None
 
-def load_file(file, report_type):
+def load_file(file, report_type, report_system):
     try:
         if file.type == "text/csv":
-            df = pd.read_csv(file)
+            # Para JReview viejo + visitas, cargamos con header en fila 4 (index 4)
+            if report_type == "visitas" and report_system == "JReview viejo":
+                df = pd.read_csv(file, header=4)
+            else:
+                df = pd.read_csv(file)
+        elif file.type in ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"]:
+            if report_type == "imagenes":
+                # Cargar solo la segunda hoja (index 1)
+                df = pd.read_excel(file, sheet_name=1, header=8, engine='openpyxl')
+            else:
+                if report_type == "visitas" and report_system == "JReview viejo":
+                    # Headers en fila 5 (index 4)
+                    df = pd.read_excel(file, sheet_name=0, header=4, engine='openpyxl')
+                else:
+                    df = pd.read_excel(file, sheet_name=0, engine='openpyxl')
         else:
-            if report_type == "visitas":
-                df = pd.read_excel(file, sheet_name=0, header=4)
-            elif report_type == "imagenes":
-                df = pd.read_excel(file, sheet_name=1, header=8)
-        
+            st.error("Tipo de archivo no soportado. Por favor, sube un archivo CSV o XLSX.")
+            return None
+
         if df is not None:
-            return preprocess_file(df, report_type)
+            return preprocess_file(df, report_type, report_system)
         return None
     except Exception as e:
         st.error(f"Error al cargar el archivo: {str(e)}")
@@ -101,24 +117,19 @@ def load_file(file, report_type):
 
 def compare_files(df1, df2):
     try:
-        # Obtener columnas comunes
         common_columns = df1.columns.intersection(df2.columns)
         if not common_columns.empty:
             df1 = df1[common_columns]
             df2 = df2[common_columns]
             
-            # Convertir DataFrames a conjuntos de tuplas para comparación
             df1_tuples = set(df1.apply(tuple, axis=1))
             df2_tuples = set(df2.apply(tuple, axis=1))
             
-            # Encontrar diferencias sin usar isin()
             diff1 = df1[~df1.apply(tuple, axis=1).map(lambda x: x in df2_tuples)]
             diff2 = df2[~df2.apply(tuple, axis=1).map(lambda x: x in df1_tuples)]
             
-            # Combinar diferencias
             all_diff = pd.concat([diff1, diff2], ignore_index=True)
             all_diff['Fuente'] = ['Archivo 1'] * len(diff1) + ['Archivo 2'] * len(diff2)
-            
             return all_diff
         else:
             st.warning("No se encontraron columnas comunes entre los archivos.")
@@ -132,10 +143,12 @@ def main():
         load_css()
         show_home()
 
-        # Selección de tipo de reporte
+        # Primer selectbox: tipo de reporte general
+        report_system = st.selectbox("Seleccione el sistema de reporte", ["MAP", "JReview viejo"])
+
+        # Segundo selectbox: tipo de reporte específico
         report_type = st.selectbox("Seleccione el tipo de reporte", ["visitas", "imagenes"])
 
-        # Sección de carga de archivos
         with st.container():
             col1, col2 = st.columns(2)
 
@@ -143,7 +156,7 @@ def main():
                 with st.expander("📁 Archivo 1", expanded=True):
                     file1 = st.file_uploader("Seleccione el primer archivo", type=["csv", "xlsx", "xls"], key="file1")
                     if file1:
-                        df1 = load_file(file1, report_type)
+                        df1 = load_file(file1, report_type, report_system)
                         if df1 is not None:
                             st.dataframe(df1, use_container_width=True)
                             st.session_state['df1'] = df1
@@ -152,23 +165,21 @@ def main():
                 with st.expander("📁 Archivo 2", expanded=True):
                     file2 = st.file_uploader("Seleccione el segundo archivo", type=["csv", "xlsx", "xls"], key="file2")
                     if file2:
-                        df2 = load_file(file2, report_type)
+                        df2 = load_file(file2, report_type, report_system)
                         if df2 is not None:
                             st.dataframe(df2, use_container_width=True)
                             st.session_state['df2'] = df2
                             st.session_state['file2_name'] = file2.name
 
-        # Sección de comparación
         if all(key in st.session_state for key in ['df1', 'df2']):
             if st.button("Comparar Archivos", use_container_width=True):
                 with st.spinner('Procesando comparación...'):
                     differences = compare_files(st.session_state['df1'], st.session_state['df2'])
-                    
+
                     if differences is not None and not differences.empty:
                         st.markdown("<h3 style='color: blue;'>Resultados de la Comparación</h3>", unsafe_allow_html=True)
                         st.dataframe(differences, use_container_width=True)
 
-                        # Preparar botón de descarga
                         output = io.BytesIO()
                         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                             differences.to_excel(writer, sheet_name='Diferencias', index=False)
